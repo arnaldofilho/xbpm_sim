@@ -317,5 +317,9 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/python,emacs,vim,linux,windows,macos
+
+# Files used or created by the simulation.
 parameters_xbpm_sim
 spectra_*
+XBPM_*
+beam_*
