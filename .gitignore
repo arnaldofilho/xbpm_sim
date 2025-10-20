@@ -317,3 +317,4 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/python,emacs,vim,linux,windows,macos
+parameters_xbpm_sim
