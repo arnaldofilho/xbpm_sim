@@ -10,7 +10,7 @@ import numpy as np
 from copy import deepcopy
 
 
-class BladeMask:
+class DotsMask:
     """Create a mask of "blades" in a XBPM.
 
     A square numpy array is created with the dimensions nbins[0] (horiz) x
@@ -23,15 +23,19 @@ class BladeMask:
     """
     def __init__(self, gprm):
         """Define the main parameters of the mask."""
-        self.boxsize = gprm['boxsize']
-        self.pixelsize = gprm['pixelsize']
-        self.nbins = gprm['nbins']
-        self.corneroffset = gprm['corneroffset']
-        self.bladelength = gprm['bladelength']
-        self.bladethickness = gprm['bladethickness']
-        self.phi = self._degtorad(gprm['phi'])
-        self.bladescoordinates = self._blades_coordinates()
+        self.boxsize = gprm["boxsize"]
+        self.pixelsize = gprm["pixelsize"]
+        self.nbins = gprm["nbins"]
+        self.corneroffset = gprm["corneroffset"]
+        self.bladelength = gprm["bladelength"]
+        self.dotsnumber = gprm["ndots"]
+        # self.dotsize = gprm["dotsize"]
+        self.phi = self._degtorad(gprm["phi"])
+        self.dotscoordinates = self._dots_coordinates()
         self.maskarray = self.mask_array()
+
+        # DEBUG
+        self.bladethickness = 0.2
 
     def mask_array(self):
         """Create a mask to weight the intersection of pixels and blades.
@@ -55,7 +59,7 @@ class BladeMask:
         pxnorm = 1. / self.pixelsize
 
         # Run through blades to assign weights to pixels.
-        for ib, blade in enumerate(self.bladescoordinates):
+        for ib, blade in enumerate(self.dotscoordinates):
             # Equations of lines joining the corners of the blade.
             bladeequations = [
                 self._edge_line(blade[0] * pxnorm, blade[1] * pxnorm),
@@ -137,7 +141,7 @@ class BladeMask:
 
         return self.mask
 
-    def _blades_coordinates(self):
+    def _dots_coordinates(self):
         """Create a list of the coordinates of the four blades.
 
         Each element of the list is an array with the coordinates of the

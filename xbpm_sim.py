@@ -84,7 +84,7 @@ import sys
 bibdir = "/home/arnaldo.filho/XBPM/src/"
 sys.path.append(bibdir)
 from positioncalc import BeamPosition as BmP  # type: ignore # noqa: F401, E402
-from blademask import BladeMask               # type: ignore # noqa: E402
+from dotsmask import DotsMask                 # type: ignore # noqa: E402
 
 # Initialize random number generator.
 rng = np.random.default_rng(seed=None)
@@ -467,7 +467,7 @@ def beam_over_mask(beam, mask):
 
 
 def image_show(count, beamhist, maskarray, bmp, gprm,  # noqa: ARG001
-               axbeam, axblades, axval):
+               axes):
     """Add histograms and plot resulting image.
 
     Args:
@@ -491,6 +491,7 @@ def image_show(count, beamhist, maskarray, bmp, gprm,  # noqa: ARG001
     # Update histogram.
     histogram_update(beamhist, gprm)
     imgbeam = beamhist[0] if gprm["ngauss"] == 1 else sum(beamhist)
+    axbeam, axblades, axval = axes
 
     xt, yt = 0.5 * gprm["boxsize"][0], 0.5 * gprm["boxsize"][1]
     extent = (-xt, xt, -yt, yt)
@@ -692,7 +693,7 @@ def parameters_read(parfilename, distributionfile):
             elif key in ['addring', 'histupdate',
                          'randomhist', 'registerflux']:
                 prm[key] = False if val[0] == 'False' else True
-            elif key in ['ngauss', 'nsweeps', 'nsample']:
+            elif key in ['ngauss', 'nsweeps', 'nsample', 'ndots']:
                 prm[key] = int(float(val[0]))
             elif key == 'thetadeg':
                 prm['theta'] = round(float(val[0]) * np.pi / 180.0, 6)
@@ -763,6 +764,34 @@ def cmd_options():
     return interactive, parameterfile, distributionfile
 
 
+def interactive_run(gprm, beamhist, maskarray, bmp, fig, axes, step=0.2):
+    """."""
+    listener = Listener(
+        on_press=lambda event: on_press(event, gprm=gprm, step=step),
+        on_release=on_release,
+    )
+    listener.start()
+
+    # Animation function caller
+    axbeam, axblades, axval = axes
+    imshow = partial(image_show, beamhist=beamhist,
+                        maskarray=maskarray, bmp=bmp, gprm=gprm,
+                        axbeam=axbeam, axblades=axblades, axval=axval)
+    try:
+        # Animate. Variable 'anim' prevents FuncAnimation
+        # from being deleted without rendering.
+        anim = mpanim.FuncAnimation(fig, imshow,         # noqa: F841
+                                    repeat=False,
+                                    repeat_delay=500)
+        # writer = mpanim.PillowWriter(fps=2)
+        # anim.save("xbpm_sweep.gif", writer=writer)
+
+    except Exception as err:
+        print("ERROR when calling FuncAnimation: ", err)
+
+    return listener
+
+
 def main():
     """Simulate in real time the incidence of photons upon XBPM blades."""
     # Initialize random seed.
@@ -793,18 +822,7 @@ def main():
     print("done.\n")
 
     # Create blades array, a 'mask'.
-    blades = BladeMask(gprm)
-
-    # DEBUG
-    # print("\n>>>>> (MAIN) gprm :")
-    # for key, val in gprm.items():
-    #     print(f" {key} = {val}")
-    # print("\n\n")
-
-    # plt.imshow(blades.maskarray)
-    # plt.show()
-    # sys.exit(0)
-    # DEBUG
+    blades = DotsMask(gprm)
 
     # Initialize beam position calculation methods.
     bmp = BmP(blades.bladescoordinates, gprm)
@@ -814,32 +832,35 @@ def main():
 
     # Listen to the keyboard arrows (interactive motion of the beam mean).
     if interactive:
-        step = 0.2
-        listener = Listener(
-            on_press=lambda event: on_press(event, gprm=gprm, step=step),
-            on_release=on_release,
-        )
-        listener.start()
+        listener = interactive_run(gprm, beamhist, blades.maskarray,
+                                   bmp, fig, axes=(axbeam, axblades, axval))
 
-        # Animation function caller.
-        imshow = partial(image_show, beamhist=beamhist,
-                         maskarray=blades.maskarray, bmp=bmp, gprm=gprm,
-                         axbeam=axbeam, axblades=axblades, axval=axval)
-        try:
-            # Animate. Variable 'anim' prevents FuncAnimation
-            # from being deleted without rendering.
-            anim = mpanim.FuncAnimation(fig, imshow,         # noqa: F841
-                                        repeat=False,
-                                        repeat_delay=500)
-            # writer = mpanim.PillowWriter(fps=2)
-            # anim.save("xbpm_sweep.gif", writer=writer)
+        # step = 0.2
+        # listener = Listener(
+        #     on_press=lambda event: on_press(event, gprm=gprm, step=step),
+        #     on_release=on_release,
+        # )
+        # listener.start()
 
-        except Exception as err:
-            print("ERROR when calling FuncAnimation: ", err)
+        # # Animation function caller.
+        # imshow = partial(image_show, beamhist=beamhist,
+        #                  maskarray=blades.maskarray, bmp=bmp, gprm=gprm,
+        #                  axes=(axbeam, axblades, axval))
+        # try:
+        #     # Animate. Variable 'anim' prevents FuncAnimation
+        #     # from being deleted without rendering.
+        #     anim = mpanim.FuncAnimation(fig, imshow,         # noqa: F841
+        #                                 repeat=False,
+        #                                 repeat_delay=500)
+        #     # writer = mpanim.PillowWriter(fps=2)
+        #     # anim.save("xbpm_sweep.gif", writer=writer)
+
+        # except Exception as err:
+        #     print("ERROR when calling FuncAnimation: ", err)
     else:
         # Show initial image.
         imbeam, imblades = image_show(None, beamhist, blades.maskarray, bmp,
-                                      gprm, axbeam, axblades, axval)
+                                      gprm, axes=(axbeam, axblades, axval))
 
         imshow = (imbeam, imblades, axval)
         sweep_make(fig, beamhist, imshow, blades, bmp, gprm)
