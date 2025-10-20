@@ -19,7 +19,7 @@ class BladeMask:
 
     The standard values are based on real dimensions of the structures, in mm.
 
-    Version: 2025-07-22.
+    Version: 2025-08-14.
     """
     def __init__(self, gprm):
         """Define the main parameters of the mask."""
@@ -51,14 +51,17 @@ class BladeMask:
         # Create mask array with zeros.
         self.mask = np.zeros((self.nbins[0], self.nbins[1]))
 
+        # Scale to array units.
+        pxnorm = 1. / self.pixelsize
+
         # Run through blades to assign weights to pixels.
         for ib, blade in enumerate(self.bladescoordinates):
             # Equations of lines joining the corners of the blade.
             bladeequations = [
-                self._edge_line(blade[0], blade[1]),
-                self._edge_line(blade[1], blade[2]),
-                self._edge_line(blade[2], blade[3]),
-                self._edge_line(blade[3], blade[0]),
+                self._edge_line(blade[0] * pxnorm, blade[1] * pxnorm),
+                self._edge_line(blade[1] * pxnorm, blade[2] * pxnorm),
+                self._edge_line(blade[2] * pxnorm, blade[3] * pxnorm),
+                self._edge_line(blade[3] * pxnorm, blade[0] * pxnorm),
             ]
 
             # Set horizontal (x) interval, and top and bottom line
@@ -92,9 +95,9 @@ class BladeMask:
             # cross each other inside the pixel.
             self._pixel_corner_weight(blade, bladeequations)
 
-            # Run vertically in each interval to assign weight to pixels.
-            # Treat bulk and borders of the blades, except for corners.
-            for ii, interval in enumerate(intervals):
+            # Run vertically in each interval to assign weight to pixels:
+            # treat bulk and borders of the blades, except corners.
+            for jj, interval in enumerate(intervals):
                 # Define the interval corresponding to current blade. Take the
                 # limits of the box, [0, boxsize[0/1]], into consideration.
                 # xA, xB = max(interval[0], 0), min(interval[1], self.boxsize)
@@ -104,38 +107,34 @@ class BladeMask:
                 # physical, to guarantee each pixel will be analysed only once.
                 # Nx = int((xB - xA) / pixelsize)  # Number of intervals
                 # (round up).
-                ncolmin = max(0, int(interval[0] / self.pixelsize))
-                ncolmax = min(int(interval[1] / self.pixelsize) + 1,
-                              self.nbins[1] - 1)
+                ncolmin = max(0, round(interval[0] * pxnorm))
+                ncolmax = min(round(interval[1] * pxnorm), self.nbins[1])
 
-                # Run over all pixels.
+                # Run over all pixels inside intervals defined by
+                # blade's corners.
                 # Horizontal range to be scanned.
                 for ncol in range(ncolmin, ncolmax):
-                    # Vertical limits in physical (real) coordinates.
-                    rx = ncol * self.pixelsize
+                    # Vertical limits.
                     ymin = min(
-                        self._linear(rx, *bot_eq[ii]),
-                        self._linear(rx + self.pixelsize, *bot_eq[ii]),
+                        self._linear(ncol, *bot_eq[jj]),
+                        self._linear(ncol + 1, *bot_eq[jj]),
                     )
                     ymax = max(
-                        self._linear(rx, *top_eq[ii]),
-                        self._linear(rx + self.pixelsize, *top_eq[ii]),
+                        self._linear(ncol, *top_eq[jj]),
+                        self._linear(ncol + 1, *top_eq[jj]),
                     )
                     # Limits in array coordinates.
-                    nlinmin, nlinmax = (
-                        round(ymin / self.pixelsize),
-                        round(ymax / self.pixelsize + 1),
-                    )
-                    # int(ymin / self.pixelsize),
-                    # int(ymax / self.pixelsize + 1),
+                    nlinmin, nlinmax = (int(ymin), int(ymax + 2))
 
                     # Vertical range to be scanned.
-                    nlinrange = range(max(nlinmin - 1, 0),
-                                      min(nlinmax + 1, self.nbins[0] - 1))
+                    nlinrange = range(max(nlinmin, 0),
+                                      min(nlinmax, self.nbins[0]))
+
                     for nlin in nlinrange:
-                        self.mask[nlin, ncol] = self._pixel_weight(
-                            nlin, ncol, bot_eq[ii], top_eq[ii]
+                        self.mask[nlin, ncol] = self.pixel_weight(
+                            nlin, ncol, bot_eq[jj], top_eq[jj]
                         )
+
         return self.mask
 
     def _blades_coordinates(self):
@@ -221,91 +220,93 @@ class BladeMask:
 
         return blades
 
-    def _pixel_weight(self, nlin, ncol, bot, top):  # noqa: C901
-        """Calculate the intersection of the pixel with the blade.
+    def _pixel_area(self, key, x0, xf, ya, yb):
+        """Wrapper function to access pixel area dictionary.
 
-        Args:
-            ncol (int) : horizontal bottom left corner of the pixel
-            nlin (int) : vertical bottom left corner of the pixel
-            bot (tuple): coefficients of the linear equations which
-                        define the blade bottom edges;
-            top (tuple): coefficients of the linear equations which
-                        define the blade top edges;
-
-
-        Obs.: top/bottom refers to _blade_ edges;
-        '0'/'f' refers to _pixel's_ bottom/top edges, respectively;
-        'a' / 'b' refers to left/right pixel's coordinates (the interval),
-        respectively.
+        The letters in keys indicate the pixel borders crossed by
+        the edge's line, namely, T: top, B: bottom, L: left, R: right.
         """
-        # Pixel interval.
-        xa, y0 = ncol * self.pixelsize, nlin * self.pixelsize
-        xb, yf = xa + self.pixelsize, y0 + self.pixelsize
-        pixelarea = self.pixelsize * self.pixelsize
+        if key == 'TB':
+            return 0.5 * (x0 + xf)
 
-        # Weight is 1 if the pixel is fully inside the blade.
-        yatop, ybtop = self._linear(xa, *top), self._linear(xb, *top)
-        yabot, ybbot = self._linear(xa, *bot), self._linear(xb, *bot)
-        if yatop >= yf and ybtop >= yf and yabot <= y0 and ybbot <= y0:
-            return 1.0
+        if key == 'LR':
+            return 0.5 * (ya + yb)
 
-        # Analysis of edge cases.
+        if key == 'BL':
+            return 0.5 * x0 * ya
 
-        # Horizontal coordinate of the blade edge lines within the pixel
-        # interval, x = (y - b) / a.
-        #
-        # Blade top line related to pixel bottom/top.
-        x0top = (y0 - top[1]) / top[0]
-        xftop = (yf - top[1]) / top[0]
-        # Blade bottom line related to pixel bottom/top.
-        x0bot = (y0 - bot[1]) / bot[0]
-        xfbot = (yf - bot[1]) / bot[0]
+        if key == 'BR':
+            return 0.5 * x0 * yb
 
-        # Top line crosses pixel's upper edge
-        if xa <= xftop <= xb:
-            # and top line crosses left edge.
-            if y0 <= yatop <= yf:
-                return (1 - ((xftop - xa) * (yf - yatop) * 0.5) / pixelarea)
+        if key == 'TL':
+            return 1. - (0.5 * xf * (1 - ya))
 
-            # and top line crosses right edge.
-            if y0 <= ybtop <= yf:
-                return (1 - ((xb - xftop) * (yf - ybtop) * 0.5) / pixelarea)
+        if key == 'TR':
+            return 1. - 0.5 * (1 - xf) * (1 - yb)
 
-            # and top line crosses bottom edge.
-            if xa <= x0top <= xb:
-                # Ascending line.
-                if x0top <= xftop:
-                    return (((xb - x0top) + (xb - xftop))
-                            * 0.5 * self.pixelsize / pixelarea)
+    def pixel_weight(self, nlin, ncol, bot_eq, top_eq):
+        """Calculate the area of intersection of blade over the pixel.
 
-                # Descending line.
-                return (((x0top - xa) + (xftop - xa))
-                        * 0.5 * self.pixelsize / pixelarea)
+        The intersected area is the weight of the pixel to be considered.
 
-        # Bottom line crosses pixel's upper edge
-        if xa <= xfbot <= xb:
-            # and bottom line crosses left edge.
-            if y0 <= yabot <= yf:
-                return (yf - yabot) * (xfbot - xa) * 0.5 / pixelarea
+        Obs.: in this method, the pixel area is set to one and the
+        bottom-left corner of the pixel is considered as (0, 0) coordinate.
+        """
+        # Shift equations for current pixel position (set bottom-left
+        # coordinate to zero).
+        boteq = [bot_eq[0], bot_eq[1] + bot_eq[0] * ncol - nlin]
+        topeq = [top_eq[0], top_eq[1] + top_eq[0] * ncol - nlin]
 
-            # and top line crosses right edge.
-            if y0 <= ybbot <= yf:
-                return (xb - xfbot) * (yf - ybbot) * 0.5 / pixelarea
+        # Ordinates where the equations cross the interval.
+        yabot, ybbot = self._linear(0, *boteq), self._linear(1, *boteq)
+        yatop, ybtop = self._linear(0, *topeq), self._linear(1, *topeq)
 
-            # and bottom line crosses bottom edge.
-            if xa <= x0bot <= xb:
-                # Ascending line.
-                if x0bot <= xfbot:
-                    return (((xfbot - xa) + (x0bot - xb))
-                            * 0.5 * self.pixelsize / pixelarea)
+        # If corners are outside the blade.
+        if (yatop <= 0 and ybtop <= 0) or (yabot >= 1 and ybbot >= 1):
+            return 0
 
-                # Descending line.
-                return (((xb - xfbot) + (xb - x0bot))
-                        * 0.5 * self.pixelsize / pixelarea)
+        # If all corners are inside the blade.
+        if yabot < 0 and ybbot < 0 and yatop > 1 and ybtop > 1:
+            return 1.
 
-        return 0.0
+        # If bottom line crosses the pixel.
+        x0 = -yabot / (ybbot - yabot)
+        xf = (1 - yabot) / (ybbot - yabot)
+        if (0 <= x0 <= 1 or 0 <= xf <= 1 or
+            0 <= yabot <= 1 or 0 <= ybbot <= 1):
+            lineq = boteq
+            toparea = True
+        else:
+            # Top line crosses the pixel.
+            lineq = topeq
+            toparea = False
 
-    #
+        # Ordinates where the line crosses the interval [xa, xb].
+        ya = self._linear(0, *lineq)
+        yb = self._linear(1, *lineq)
+        # Abscissas where the line crosses the bottom/top of the
+        # pixel ordinates.
+        x0 = -ya / (yb - ya)
+        xf = (1. - ya) / (yb - ya)
+
+        # Classify the case according to crossing lines.
+        cross = ''
+        if 0 <= xf <= 1:
+            cross += 'T'
+        if 0 <= x0 <= 1:
+            cross += 'B'
+        if 0 <= ya <= 1:
+            cross += 'L'
+        if 0 <= yb <= 1:
+            cross += 'R'
+
+        # Calculate intersection area (blade over pixel).
+        area0 = self._pixel_area(cross[:2], x0, xf, ya, yb)
+        if toparea:
+            return 1.0 - area0
+        else:
+            return area0
+
     def _pixel_corner_weight(self, corners, blade_eqs):
         """Assign weights to the pixels at blade's corners."""
         for ic, corner in enumerate(corners):

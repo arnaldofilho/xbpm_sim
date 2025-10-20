@@ -20,7 +20,7 @@ where
 
 
 The default is non-interactive, meaning a sweep is made over the
-defined window.
+defined window. Length units are in mm; angles, in degrees.
 
 The parameters (to be defined in the parameter file) are:
 
@@ -208,8 +208,16 @@ def histogram_init(gprm):
     """
     beamhist = list()
     if gprm['distributionfile'] is not None:
-        beamhist.append(np.load(gprm['distributionfile']))
-        # with open(gprm['distributionfile']) as df:
+        hist = np.load(gprm['distributionfile'])
+        hlin, hcol = hist.shape
+        nlin, ncol = [int(x) for x in gprm['nbins'] + gprm['sweepinterval']]
+
+        if hlin < nlin or hcol < ncol:
+            print(">>>>> WARNING: beam distribution histogram"
+                  f" (shape = {hlin}, {hcol})is smaller than window box"
+                  f" (shape = {nlin}, {ncol}).\n"
+                  ">>>>> Superposition might be truncated at the borders.\n\n")
+        beamhist.append(hist)
     elif gprm['randomhist']:
         beamhist.append(gaussian_2d_samples(gprm, 0)[0])
     else:
@@ -267,7 +275,7 @@ def histogram_ring(gprm, mradius, sradius, center):
 
 
 def histogram_update(beamhist, gprm):
-    """Update all histogram-like distributions stored in beamhist."""
+    """Select method to update histogram, its type and number."""
     for ng in range(len(beamhist)):
         if gprm['distributionfile'] is not None:
             hist = histogram_shift(gprm['origbeam'],
@@ -286,7 +294,6 @@ def histogram_update(beamhist, gprm):
                 sradius=gh["sigmaradius"], center=gh["mean"]
             )
         beamhist[ng] = hist
-    return
 
 
 def gaussian_2d_analytic(gprm, ng):
@@ -358,6 +365,7 @@ def gaussian_2d_samples(gprm, idx):
 
 def histogram_shift(beamhist, mean, oldmean=(0, 0), pixelsize=0.2):
     """Just shift histogram by mean vector."""
+    # The image must extend to the whole box area.
     lin, col = beamhist.shape
     # New histogram image.
     newhist = np.zeros((lin, col))
@@ -447,6 +455,17 @@ def box_values_show(axval, flux, mean, pairpositions,
                       verticalalignment="top")
 
 
+def beam_over_mask(beam, mask):
+    """Superimpose beam over mask, considering their boundaries."""
+    blin, bcol = beam.shape
+    mlin, mcol = mask.shape
+    startlin = round((blin - mlin)/2)
+    endlin = startlin + mlin
+    startcol = round((bcol - mcol)/2)
+    endcol = startcol + mcol
+    return beam[startlin:endlin, startcol:endcol] * mask
+
+
 def image_show(count, beamhist, maskarray, bmp, gprm,  # noqa: ARG001
                axbeam, axblades, axval):
     """Add histograms and plot resulting image.
@@ -481,7 +500,7 @@ def image_show(count, beamhist, maskarray, bmp, gprm,  # noqa: ARG001
     # Apply the mask on the image created, so only the regions where
     # the distribution and the blades intersect are considered for the
     # measurements.
-    imgmasked = imgbeam * maskarray
+    imgmasked = beam_over_mask(imgbeam, maskarray)
     axblades.clear()
     imblades = axblades.imshow(imgmasked, origin="lower", extent=extent)
 
@@ -496,7 +515,8 @@ def image_show(count, beamhist, maskarray, bmp, gprm,  # noqa: ARG001
     return imbeam, imblades
 
 
-def measurement_record(mean, pairpositions, crosspositions, gprm):
+def measurement_record(mean, pairpositions, crosspositions, gprm,
+                       fluxes=None):
     """Write mean, crosspositions and pairpositions results to data file.
 
     Args:
@@ -504,6 +524,7 @@ def measurement_record(mean, pairpositions, crosspositions, gprm):
         pairpositions (array): pairwise measured positions;
         crosspositions (array): crossed-blades measured positions;
         gprm (dict): general parameters of the simulation.
+        fluxes (list) : values of flux on the blades.
     """
     outfilename = gprm['outfilename']
 
@@ -511,15 +532,19 @@ def measurement_record(mean, pairpositions, crosspositions, gprm):
     crossfile = f"{outfilename}-cross-00.dat"
     with open(crossfile, "a") as cf:
         dataline = (f"{mean[0]:.6f} {mean[1]:.6f}   "
-                    f"{crosspositions[0]:.6f} {crosspositions[1]:.6f}\n")
-        cf.write(dataline)
+                    f"{crosspositions[0]:.6f} {crosspositions[1]:.6f}")
+        if fluxes is not None:
+            dataline += "  " + " ".join([f"{flux:.6f}" for flux in fluxes])
+        cf.write(dataline + "\n")
 
     # Write out paired-blades position measurements.
     pairfile = f"{outfilename}-pair-00.dat"
     with open(pairfile, "a") as pf:
         dataline = (f"{mean[0]:.6f} {mean[1]:.6f}  "
-                    f"{pairpositions[0]:.6f} {pairpositions[1]:.6f}\n")
-        pf.write(dataline)
+                    f"{pairpositions[0]:.6f} {pairpositions[1]:.6f}")
+        if fluxes is not None:
+            dataline += "  " + "   ".join([f"{flux:.6f}" for flux in fluxes])
+        pf.write(dataline + "\n")
 
 
 def sweeping_points(gprm):
@@ -560,8 +585,9 @@ def parameters_write(gprm, pfile):
             f"# {datetime.now()}\n")
     pfile.write(head)
     for key, val in gprm.items():
-        # Skip if entry is a dictionary for gaussian distribution.
-        if isinstance(key, int):
+        # Skip if entry is a dictionary for gaussian distribution or
+        # a copy of the beam distribution.
+        if isinstance(key, int) or key == "origbeam":
             continue
         if key == 'cov':
             pfile.write(f"# {key:15} :  [{val[0]} {val[1]}]\n")
@@ -618,7 +644,8 @@ def sweep_make(fig, beamhist, imageshow, blades, bmp, gprm):
         imgbeam = shiftedbeam if gprm["ngauss"] == 1 else sum(beamhist)
         imshowbeam.set_data(imgbeam)
         #
-        imgmasked = imgbeam * blades.maskarray
+        # imgmasked = imgbeam * blades.maskarray
+        imgmasked = beam_over_mask(imgbeam, blades.maskarray)
         imshowblades.set_data(imgmasked)
 
         # Update measured data and show it.
@@ -628,7 +655,9 @@ def sweep_make(fig, beamhist, imageshow, blades, bmp, gprm):
                         crosspositions, ineigh)
 
         # Record values.
-        measurement_record(mean, crosspositions, pairpositions, gprm)
+        registerflux = fluxes if gprm['registerflux'] else None
+        measurement_record(mean, crosspositions, pairpositions, gprm,
+                           fluxes=registerflux)
 
         fig.canvas.draw_idle()
         plt.pause(0.1)
@@ -660,7 +689,8 @@ def parameters_read(parfilename, distributionfile):
                 v1 = float(re.sub(r'[\[\,]', '', val[0]))
                 v2 = float(re.sub(r'[\]\,]', '', val[1]))
                 prm[key] = np.array([v1, v2])
-            elif key in ['addring', 'histupdate', 'randomhist']:
+            elif key in ['addring', 'histupdate',
+                         'randomhist', 'registerflux']:
                 prm[key] = False if val[0] == 'False' else True
             elif key in ['ngauss', 'nsweeps', 'nsample']:
                 prm[key] = int(float(val[0]))
@@ -764,6 +794,17 @@ def main():
 
     # Create blades array, a 'mask'.
     blades = BladeMask(gprm)
+
+    # DEBUG
+    # print("\n>>>>> (MAIN) gprm :")
+    # for key, val in gprm.items():
+    #     print(f" {key} = {val}")
+    # print("\n\n")
+
+    # plt.imshow(blades.maskarray)
+    # plt.show()
+    # sys.exit(0)
+    # DEBUG
 
     # Initialize beam position calculation methods.
     bmp = BmP(blades.bladescoordinates, gprm)
