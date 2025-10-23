@@ -776,7 +776,7 @@ def interactive_run(gprm, beamhist, maskarray, bmp, fig, axes, step=0.2):
     axbeam, axblades, axval = axes
     imshow = partial(image_show, beamhist=beamhist,
                         maskarray=maskarray, bmp=bmp, gprm=gprm,
-                        axbeam=axbeam, axblades=axblades, axval=axval)
+                        axes=(axbeam, axblades, axval))
     try:
         # Animate. Variable 'anim' prevents FuncAnimation
         # from being deleted without rendering.
@@ -789,7 +789,7 @@ def interactive_run(gprm, beamhist, maskarray, bmp, fig, axes, step=0.2):
     except Exception as err:
         print("ERROR when calling FuncAnimation: ", err)
 
-    return listener
+    return anim, listener
 
 
 def main():
@@ -825,38 +825,15 @@ def main():
     blades = DotsMask(gprm)
 
     # Initialize beam position calculation methods.
-    bmp = BmP(blades.bladescoordinates, gprm)
+    bmp = BmP(blades.dotscoordinates, gprm)
 
     # Initialize subplots.
     fig, (axbeam, axblades, axval) = plt.subplots(1, 3, figsize=(15, 6))
 
     # Listen to the keyboard arrows (interactive motion of the beam mean).
     if interactive:
-        listener = interactive_run(gprm, beamhist, blades.maskarray,
+        anim, listener = interactive_run(gprm, beamhist, blades.maskarray,
                                    bmp, fig, axes=(axbeam, axblades, axval))
-
-        # step = 0.2
-        # listener = Listener(
-        #     on_press=lambda event: on_press(event, gprm=gprm, step=step),
-        #     on_release=on_release,
-        # )
-        # listener.start()
-
-        # # Animation function caller.
-        # imshow = partial(image_show, beamhist=beamhist,
-        #                  maskarray=blades.maskarray, bmp=bmp, gprm=gprm,
-        #                  axes=(axbeam, axblades, axval))
-        # try:
-        #     # Animate. Variable 'anim' prevents FuncAnimation
-        #     # from being deleted without rendering.
-        #     anim = mpanim.FuncAnimation(fig, imshow,         # noqa: F841
-        #                                 repeat=False,
-        #                                 repeat_delay=500)
-        #     # writer = mpanim.PillowWriter(fps=2)
-        #     # anim.save("xbpm_sweep.gif", writer=writer)
-
-        # except Exception as err:
-        #     print("ERROR when calling FuncAnimation: ", err)
     else:
         # Show initial image.
         imbeam, imblades = image_show(None, beamhist, blades.maskarray, bmp,

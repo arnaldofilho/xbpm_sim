@@ -18,24 +18,24 @@ class DotsMask:
     vertical directions.
 
     The standard values are based on real dimensions of the structures, in mm.
-
-    Version: 2025-08-14.
     """
     def __init__(self, gprm):
         """Define the main parameters of the mask."""
-        self.boxsize = gprm["boxsize"]
-        self.pixelsize = gprm["pixelsize"]
-        self.nbins = gprm["nbins"]
-        self.corneroffset = gprm["corneroffset"]
-        self.bladelength = gprm["bladelength"]
-        self.dotsnumber = gprm["ndots"]
-        # self.dotsize = gprm["dotsize"]
-        self.phi = self._degtorad(gprm["phi"])
+        self.nbins           = gprm["nbins"]
+        self.ndots           = gprm["ndots"]
+        self.boxsize         = gprm["boxsize"]
+        self.pixelsize       = gprm["pixelsize"]
+        self.phi             = self._degtorad(gprm["phi"])
+        self.bladelength     = gprm["bladelength"]
+        self.corneroffset    = gprm["corneroffset"]
         self.dotscoordinates = self._dots_coordinates()
-        self.maskarray = self.mask_array()
+        self.maskarray       = self.mask_array()
 
         # DEBUG
         self.bladethickness = 0.2
+        # DEBUG
+
+        # self.dotsize = gprm["dotsize"]
 
     def mask_array(self):
         """Create a mask to weight the intersection of pixels and blades.
@@ -142,10 +142,12 @@ class DotsMask:
         return self.mask
 
     def _dots_coordinates(self):
-        """Create a list of the coordinates of the four blades.
+        """Create a list of the coordinates of the dots in each blade.
 
         Each element of the list is an array with the coordinates of the
-        corners of the blade. Each blade is initially created at the center
+        dots in a blade.
+
+        Each blade is initially created at the center
         of the coordinates system, then it is rotated and shifted accodingly.
         At this stage, the coordinates and measures are set in mm. They are
         transformed onto array indices afterwards.
@@ -171,6 +173,14 @@ class DotsMask:
 
         # List of all four blades.
         blades = list(range(4))
+
+        phivec = np.array([np.cos(self.phi), np.sin(self.phi)])
+        firstblade = np.array([
+            ((1.0 - ii / self.ndots) * phivec * self.bladelength)
+                for ii in range(self.ndots)
+        ])
+
+
 
         # Rotate two blades counterclockwise.
         rotmat = self._matrix_rotation(self.phi)
