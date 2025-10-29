@@ -81,7 +81,7 @@ import getopt
 import re
 import sys
 
-bibdir = "/home/arnaldo.filho/XBPM/src/"
+bibdir = "/home/arnaldo.filho/XBPM/simulation/src/"
 sys.path.append(bibdir)
 from positioncalc import BeamPosition as BmP  # type: ignore # noqa: F401, E402
 from pinmask import PinMask                   # type: ignore # noqa: E402
@@ -93,10 +93,10 @@ rng = np.random.default_rng(seed=None)
 FWHM2SIGMA = 1.0 / np.sqrt(np.log(256))
 
 
-def on_press(key, gprm, step):
+def on_press(key, prm, step):
     """Update the mean of the gaussians on pressing the keyboard arrows."""
-    for ng in range(gprm["ngauss"]):
-        mean = gprm[ng]["mean"]
+    for ng in range(prm["ngauss"]):
+        mean = prm[ng]["mean"]
         if key == Key.left:
             mean[0] -= step
         if key == Key.right:
@@ -140,55 +140,56 @@ def cov_shift(cov):
     cov[1, 1] = np.abs(cov[1, 1] + shift * (rnd.random() - 0.5))  # noqa: S311
 
 
-def histogram_parameters_set(gprm, mean, cov):
+def histogram_parameters_set(prm):
     """Set mean, covariance and number of samples for each histogram.
 
     Args:
-        gprm (dict): general parameters of the simulation;
+        prm (dict): general parameters of the simulation;
         mean (numpy array): the mean of the distribution in x and y;
         cov (numpy array): the covariance of the distribution in x and y;
     """
-    for ng in range(gprm["ngauss"]):
+    for ng in range(prm["ngauss"]):
         # Dictionary for gaussian parameters: mean, covariance and number
         # of samples.
         gh = {
-            "mean": mean,
-            "cov": cov,
-            "nsample": gprm["nsample"],
-            "NsampRing": gprm["nsample"] / 5,
-            "meanradius": min(gprm["windowsize"]) / 2,
-            "sigmaradius": min(gprm["windowsize"]) / 10,
-            # 'sigmaradius' : max(cov[0,0], cov[1,1]) * min(gprm['windowsize']),
+            "mean": deepcopy(prm["mean"]),
+            "cov": deepcopy(prm["cov"]),
+            "nsample": prm["nsample"],
+            "NsampRing": prm["nsample"] / 5,
+            "meanradius": min(prm["windowsize"]) / 2,
+            "sigmaradius": min(prm["windowsize"]) / 10,
+            # 'sigmaradius' : max(cov[0,0],
+            #  cov[1,1]) * min(prm['windowsize']),
         }
         # If not the first gaussian.
         if ng > 0:
             mean_shift(gh["mean"])
             cov_shift(gh["cov"])
-            gh["nsample"] = int(rnd.random() * gprm["nsample"])  # noqa: S311
+            gh["nsample"] = int(rnd.random() * prm["nsample"])  # noqa: S311
         # Incorporate new distribution's parameters into general
         # parameters dictionary.
-        gprm[ng] = deepcopy(gh)
+        prm[ng] = deepcopy(gh)
     return
 
 
-def mean_update(gprm, mean, nh):
+def mean_update(prm, mean, nh):
     """Update the mean in each gaussian distribution.
 
     This makes the beam sweeping inside the box.
 
     Args:
-        gprm (dict): general parameters of the simulation;
+        prm (dict): general parameters of the simulation;
         mean (list): the mean of the distribution (histogram);
         nh (int): the index of the nh-th distribution (histogram).
     """
-    meanzero = gprm[0]["mean"]
+    meanzero = prm[0]["mean"]
     for ng in range(nh):
         if ng == 0:
-            gprm[0]["mean"] = mean
+            prm[0]["mean"] = mean
         else:
             """Update the mean of the distribution preserving the distance
             from the first gaussian."""
-            gprm[ng]["mean"] += mean - meanzero
+            prm[ng]["mean"] += mean - meanzero
 
 
 def update_cov(cov, pos=(0, 0), step=0.01):
@@ -196,23 +197,23 @@ def update_cov(cov, pos=(0, 0), step=0.01):
     cov[pos[0], pos[1]] += step
 
 
-def histogram_init(gprm):
+def histogram_init(prm):
     """Initialize each histogram.
 
     Args:
-        gprm (dict): general parameters of the distribution.
+        prm (dict): general parameters of the distribution.
 
     Returns:
         beamhist (list): the gaussian histogram distributions which simulate
             the incidence of photons on the blades.
     """
     beamhist = list()
-    if gprm['distributionfile'] is not None:
+    if prm['distributionfile'] is not None:
         print(" Reading beam distribution from file: "
-              f"{gprm['distributionfile']}...")
-        hist = np.load(gprm['distributionfile'])
+              f"{prm['distributionfile']}...")
+        hist = np.load(prm['distributionfile'])
         hlin, hcol = hist.shape
-        nlin, ncol = [int(x) for x in gprm['nbins'] + gprm['sweepinterval']]
+        nlin, ncol = [int(x) for x in prm['nbins'] + prm['sweepinterval']]
 
         if hlin < nlin or hcol < ncol:
             print(">>>>> WARNING: beam distribution histogram"
@@ -220,27 +221,27 @@ def histogram_init(gprm):
                   f" (shape = {nlin}, {ncol}).\n"
                   ">>>>> Superposition might be truncated at the borders.\n\n")
         beamhist.append(hist)
-    elif gprm['randomhist']:
-        print(f" Creating a distribution with {gprm['nsample']:g} samples"
+    elif prm['randomhist']:
+        print(f" Creating a distribution with {prm['nsample']:g} samples"
             " (this may take a while)... ", end="")
-        beamhist.append(gaussian_2d_samples(gprm, 0)[0])
+        beamhist.append(gaussian_2d_samples(prm, 0)[0])
     else:
-        beamhist.append(gaussian_2d_analytic(gprm, 0))
+        beamhist.append(gaussian_2d_analytic(prm, 0))
 
     # Create distributions for remaining histograms.
-    for ng in range(1, gprm["ngauss"]):
-        gh = gprm[ng]
+    for ng in range(1, prm["ngauss"]):
+        gh = prm[ng]
         # New distributions are less intense than original.
         # gh['nsample'] = int(gh['nsample'] * rnd.random())
-        if gprm['randomhist']:
-            hist = gaussian_2d_samples(gprm, ng)[0]
+        if prm['randomhist']:
+            hist = gaussian_2d_samples(prm, ng)[0]
         else:
-            hist = gaussian_2d_analytic(gprm)
+            hist = gaussian_2d_analytic(prm)
 
         # Add a gaussian ring around the center of the beam.
-        if gprm["addring"]:
+        if prm["addring"]:
             hist += histogram_ring(
-                gprm,
+                prm,
                 radius=gh["meanradius"],
                 sradius=gh["sigmaradius"],
                 center=gh["mean"],
@@ -249,7 +250,7 @@ def histogram_init(gprm):
     return beamhist
 
 
-def histogram_ring(gprm, mradius, sradius, center):
+def histogram_ring(prm, mradius, sradius, center):
     """Create a ring-like distribution in 2d.
 
     Its angular part (theta) has an uniform distribution and the radial
@@ -257,7 +258,7 @@ def histogram_ring(gprm, mradius, sradius, center):
     Sradius. The ring's center is set to Center, nsample is the number of
     generated points and nbins is the number of histogram bins.
     """
-    nsample = gprm["nsample"]
+    nsample = prm["nsample"]
 
     # Radial and angular disrtibutions.
     # radius = np.random.Generator.normal(loc=mradius, scale=sradius,
@@ -270,41 +271,41 @@ def histogram_ring(gprm, mradius, sradius, center):
     ypos = radius * np.sin(phi) + center[0]
 
     # Classify data as a histogram.
-    dx, dy = gprm["PixelSize"], gprm["PixelSize"]
-    hbs, vbs = 0.5 * gprm['windowsize'][0], 0.5 * gprm['windowsize'][1]
+    dx, dy = prm["PixelSize"], prm["PixelSize"]
+    hbs, vbs = 0.5 * prm['windowsize'][0], 0.5 * prm['windowsize'][1]
     hedges = np.arange(-hbs, hbs + dx, dx)
     vedges = np.arange(-vbs, vbs + dy, dy)
     h2d, _, _ = np.histogram2d(xpos, ypos, bins=[hedges, vedges])
     return h2d
 
 
-def histogram_update(beamhist, gprm):
+def histogram_update(beamhist, prm):
     """Select method to update histogram, its type and number."""
     for ng in range(len(beamhist)):
-        if gprm['distributionfile'] is not None:
-            hist = histogram_shift(gprm['origbeam'],
-                                   gprm[0]['mean'],
-                                   pixelsize=gprm['pixelsize'])
-        elif gprm['randomhist']:
-            hist = gaussian_2d_samples(gprm, ng)[0]
+        if prm['distributionfile'] is not None:
+            hist = histogram_shift(prm['origbeam'],
+                                   prm[0]['mean'],
+                                   pixelsize=prm['pixelsize'])
+        elif prm['randomhist']:
+            hist = gaussian_2d_samples(prm, ng)[0]
         else:
-            hist = gaussian_2d_analytic(gprm, ng)
+            hist = gaussian_2d_analytic(prm, ng)
 
         # If a ring-like distribution must be added.
-        if gprm["addring"]:
-            gh = gprm[ng]
+        if prm["addring"]:
+            gh = prm[ng]
             hist += histogram_ring(
-                gprm, mradius=gh["meanradius"],
+                prm, mradius=gh["meanradius"],
                 sradius=gh["sigmaradius"], center=gh["mean"]
             )
         beamhist[ng] = hist
 
 
-def gaussian_2d_analytic(gprm, ng):
+def gaussian_2d_analytic(prm, ng):
     """Create a 2d gaussian distribution.
 
     Args:
-        gprm (dict) : parameters of the simulation, including the mean
+        prm (dict) : parameters of the simulation, including the mean
         and the covariance matrix of the gaussian distribution, given by
         the keys 'windowsize' (xy-domain), 'pixelsize' (resolution),
         'mean' and 'cov'.
@@ -314,22 +315,21 @@ def gaussian_2d_analytic(gprm, ng):
     Returns:
         gauss_xy (numpy array) : the 2d gaussian distribution.
     """
-    windowsize = gprm['windowsize']
-    pixelsize = gprm['pixelsize']
-    nbinsx, nbinsy = int(windowsize[0] / pixelsize), int(windowsize[1] / pixelsize)
+    windowsize = prm['windowsize']
+    pixelsize  = prm['pixelsize']
     sizex, sizey = windowsize / 2
-    xlin = np.linspace(-sizex, sizex, nbinsx)
-    ylin = np.linspace(-sizey, sizey, nbinsy)
+    nbinsx = int(windowsize[0] / pixelsize)
+    nbinsy = int(windowsize[1] / pixelsize)
+    xlin   = np.linspace(-sizex, sizex, nbinsx)
+    ylin   = np.linspace(-sizey, sizey, nbinsy)
     hx, hy = np.meshgrid(xlin, ylin)
     # Mean and covariances.
-    prm = gprm[ng]
-    mx, my = prm['mean'][0], prm['mean'][1]
-    [cx, cxy], [cyx, cy] = prm['cov']
-    # cx, cy = prm['cx'], prm['cy']
-    # cxy, cyx = prm['cxy'], prm['cyx']
+    nprm   = prm[ng]
+    mx, my = nprm['mean'][0], nprm['mean'][1]
+    [cx, cxy], [cyx, cy] = nprm['cov']
     #
     rho = np.sqrt(cxy * cyx) / (cx * cy)
-    norm = gprm['nsample'] / (2. * np.pi * np.sqrt(cx * cy * (1 - rho**2)))
+    norm = prm['nsample'] / (2. * np.pi * np.sqrt(cx * cy * (1 - rho**2)))
     e_x = (hx - mx)**2 / cx
     e_y = (hy - my)**2 / cy
     e_xy = -2 * rho * (hx - mx) * (hy - my) / np.sqrt(cx * cy)
@@ -337,27 +337,27 @@ def gaussian_2d_analytic(gprm, ng):
     return gauss_xy
 
 
-def gaussian_2d_samples(gprm, idx):
+def gaussian_2d_samples(prm, idx):
     """Generate a multivariate gaussian random sample.
 
     Given the mean=[mx, my] and the covariance matrix, cov = [[cx, cxy],
-    [cyx, cy]], defined in gprm; the specific distribution parameters set is
+    [cyx, cy]], defined in prm; the specific distribution parameters set is
     selected by idx. The standard values of the parameters are zero mean and
     covariance = 1, with no correlation (cx=cy=1, cxy=cyx=0).
-    The function returns an ndarray with gprm[idx]['nsample'] samples.
+    The function returns an ndarray with prm[idx]['nsample'] samples.
 
     Args:
-        gprm (dict):  general parameters of the simulation;
+        prm (dict):  general parameters of the simulation;
         idx (int): the index of the distribution.
 
     Returns:
         beamhist.T (numpy array): the 2-d random gaussian distribtuion;
         xedges, yedges: the edges of the distribution.
     """
-    vnb, hnb = gprm["nbins"]
-    vlims = [0.5 * -gprm["windowsize"][1], 0.5 * gprm["windowsize"][1]]
-    hlims = [0.5 * -gprm["windowsize"][0], 0.5 * gprm["windowsize"][0]]
-    gh = gprm[idx]
+    vnb, hnb = prm["nbins"]
+    vlims = [0.5 * -prm["windowsize"][1], 0.5 * prm["windowsize"][1]]
+    hlims = [0.5 * -prm["windowsize"][0], 0.5 * prm["windowsize"][0]]
+    gh = prm[idx]
     # data = np.random.multivariate_normal(gh["mean"], gh["cov"],
     #                                      size=gh["nsample"])
     data = rng.multivariate_normal(gh["mean"], gh["cov"], size=gh["nsample"])
@@ -407,55 +407,47 @@ def observables_calculate(img, bmp):
     return flux, (hpair, vpair), (hcross, vcross), ineigh
 
 
-def box_values_show(axval, flux, mean, pairpositions,
-                    crosspositions, ineigh):
+def box_values_show(axval, fluxes, mean, beamposition):
     """Show the values corresponding to incidence flux on the blades.
 
     The factors that define the position of the beam are calculated by
     different methods.
     """
-    # mean = gprm[0]["mean"]
-    hpos, vpos = pairpositions
-    hcrosspos, vcrosspos = crosspositions
+    # mean = prm[0]["mean"]
 
     # Text table with calculated values at each interaction.
-    fluxtext = (
-        f"{'[Flux 3 - TO]':<18}   {'[Flux 2 - TI]':>22}\n"
-        f"{flux[3]:<18.4f}        {flux[2]:>16.4f}\n\n"
-        f"{'[Flux 0 - BO]':<18}   {'[Flux 1 - BI]':>22}\n"
-        f"{flux[0]:<18.4f}        {flux[1]:>16.4f}"
-    )
+    # fluxtext = f"{' [Fluxes]':^40}
+    # for flux in fluxes:
+    # (
+    #     f"{'[Flux 3 - TO]':<18}   {'[Flux 2 - TI]':>22}\n"
+    #     f"{flux[3]:<18.4f}        {flux[2]:>16.4f}\n\n"
+    #     f"{'[Flux 0 - BO]':<18}   {'[Flux 1 - BI]':>22}\n"
+    #     f"{flux[0]:<18.4f}        {flux[1]:>16.4f}"
+    # )
 
     # Real and calculated positions.
-    positions = (
+    hpos, vpos = beamposition
+    pos_text = (
         f"{'     ':10}     {'H':>12}   {'V':>14}\n"
         f"{'Real ':<15}    {mean[0]:<12.2f}     {mean[1]:<12.2f}\n\n"
-        f"{'Pair ':<15}     {hpos:<10.2f}     {vpos:<10.2f}\n\n"
-        f"{'Cross':<15}    {hcrosspos:<10.2f}     {vcrosspos:<10.2f}\n"
-    )
-
-    # Neighbour pair positions.
-    neightext = (
-        f"{'[N. Top]':^50} \n {ineigh[0]:^50.2f} \n"
-        f"{'[N. Left]':<20}        {'[N. Right]':>20}]\n"
-        f"  {ineigh[3]:<18.2f}       {ineigh[1]:>18.2f} \n"
-        f"  {ineigh[2]:^50.2f} \n {'[N. Bottom]':^50}\n\n\n"
+        f"{'C.M. ':<15}    {hpos:<10.2f}     {vpos:<10.2f}\n\n"
     )
 
     # Table.
     current_table = (
-        f"{fluxtext}"
-        f"\n\n\n{positions}"
-        f"\n\n\n{neightext}"
+        # f"{fluxtext}"
+        f"\n\n\n{pos_text}"
     )
 
     axval.clear()
+    axval.set_frame_on(False)
     axval.tick_params(
         axis="x", which="both", bottom=False, top=False, labelbottom=False
-    )
-    axval.tick_params(axis="y", which="both", left=False, right=False,
-                      labelleft=False)
-    return axval.text(0.05, 0.95, current_table, fontsize=11,
+        )
+    axval.tick_params(
+        axis="y", which="both", left=False, right=False, labelleft=False
+        )
+    return axval.text(0.20, 0.90, current_table, fontsize=12,
                       verticalalignment="top")
 
 
@@ -470,8 +462,35 @@ def beam_over_mask(beam, mask):
     return beam[startlin:endlin, startcol:endcol] * mask
 
 
-def image_show(count, beamhist, mask, bmp, gprm,  # noqa: ARG001
-               axes):
+def interactive_run(prm, beamhist, mask, bmp, fig, axes, step=0.2):
+    """."""
+    listener = Listener(
+        on_press=lambda event: on_press(event, prm=prm, step=step),
+        on_release=on_release,
+    )
+    listener.start()
+
+    # Animation function caller
+    axbeam, axblades, axval = axes
+    imshow = partial(image_show, beamhist=beamhist,
+                        mask=mask, bmp=bmp, prm=prm,
+                        axes=(axbeam, axblades, axval))
+    try:
+        # Animate. Variable 'anim' prevents FuncAnimation
+        # from being deleted without rendering.
+        anim = mpanim.FuncAnimation(fig, imshow,         # noqa: F841
+                                    repeat=False,
+                                    repeat_delay=500)
+        # writer = mpanim.PillowWriter(fps=2)
+        # anim.save("xbpm_sweep.gif", writer=writer)
+
+    except Exception as err:
+        print("ERROR when calling FuncAnimation: ", err)
+
+    return anim, listener
+
+
+def image_show(count, beamhist, mask, bmp, prm, axes):  # noqa: ARG001
     """Add histograms and plot resulting image.
 
     Args:
@@ -480,24 +499,22 @@ def image_show(count, beamhist, mask, bmp, gprm,  # noqa: ARG001
         mask (numpy array): the array with weights corresponding to the
             presence of the blades;
         bmp (BeamPosition object): methods to calculate the beam position;
-        gprm (dict) : general parameters of the simulation;
-        axbeam (pyplot axis): the figure axis on which the beam image will be
-            shown;
-        axblades (pyplot axis): the figure axis to show the intersection of
-            distribution and blades;
-        axval (pyplot axis): the figure axis to show a box with calculated
-            values;
+        prm (dict) : general parameters of the simulation;
+        axes (tuple): triple with the pyplot axes: axbeam (the figure axis
+            on which the beam image will be shown), axblades (the figure axis
+            to show the intersection of distribution and blades), axval (the
+            figure axis to show a box with calculated values).
 
     Returns:
         imbeam (pyplot image): the beam image;
         imblades (pyplot image): the blades image.
     """
     # Update histogram.
-    histogram_update(beamhist, gprm)
-    imgbeam = beamhist[0] if gprm["ngauss"] == 1 else sum(beamhist)
+    histogram_update(beamhist, prm)
+    imgbeam = beamhist[0] if prm["ngauss"] == 1 else sum(beamhist)
     axbeam, axblades, axval = axes
 
-    xt, yt = 0.5 * gprm["windowsize"][0], 0.5 * gprm["windowsize"][1]
+    xt, yt = 0.5 * prm["windowsize"][0], 0.5 * prm["windowsize"][1]
     extent = (-xt, xt, -yt, yt)
     axbeam.clear()
     imbeam = axbeam.imshow(imgbeam, origin="lower", extent=extent)
@@ -510,62 +527,56 @@ def image_show(count, beamhist, mask, bmp, gprm,  # noqa: ARG001
     imblades = axblades.imshow(imgmasked, origin="lower", extent=extent)
 
     # Measure the flux on the blades, calculate positions and show it.
-    (flux, pairpositions,
-     crosspositions, ineigh) = bmp.center_of_mass(imgmasked)
-    box_values_show(axval=axval, flux=flux, mean=gprm[0]['mean'],
-                    pairpositions=pairpositions,
-                    crosspositions=crosspositions,
-                    ineigh=ineigh)
+    (beam_pos, fluxes) = bmp.center_of_mass(imgmasked)
+    box_values_show(axval=axval, fluxes=fluxes, mean=prm[0]['mean'],
+                    beamposition=beam_pos)
 
     return imbeam, imblades
 
 
-def measurement_record(mean, pairpositions, crosspositions, gprm,
-                       fluxes=None):
+def measurement_record(mean, beam_pos, prm, fluxes=None):
     """Write mean, crosspositions and pairpositions results to data file.
 
     Args:
         mean (array): current mean value of sweeping;
-        pairpositions (array): pairwise measured positions;
-        crosspositions (array): crossed-blades measured positions;
-        gprm (dict): general parameters of the simulation.
+        beam_pos (array): calculated positions;
+        prm (dict): general parameters of the simulation.
         fluxes (list) : values of flux on the blades.
     """
-    outfilename = gprm['outfilename']
+    outfilename = prm['outfilename']
 
     # Write out crossed-blades position measurements.
-    crossfile = f"{outfilename}-cross-00.dat"
-    with open(crossfile, "a") as cf:
+    positionfile = f"{outfilename}-positions-00.dat"
+    with open(positionfile, "a") as ff:
         dataline = (f"{mean[0]:.6f} {mean[1]:.6f}   "
-                    f"{crosspositions[0]:.6f} {crosspositions[1]:.6f}")
-        if fluxes is not None:
-            dataline += "  " + " ".join([f"{flux:.6f}" for flux in fluxes])
-        cf.write(dataline + "\n")
+                    f"{beam_pos[0]:.6f} {beam_pos[1]:.6f}")
+        ff.write(dataline + "\n")
 
-    # Write out paired-blades position measurements.
-    pairfile = f"{outfilename}-pair-00.dat"
-    with open(pairfile, "a") as pf:
-        dataline = (f"{mean[0]:.6f} {mean[1]:.6f}  "
-                    f"{pairpositions[0]:.6f} {pairpositions[1]:.6f}")
-        if fluxes is not None:
-            dataline += "  " + "   ".join([f"{flux:.6f}" for flux in fluxes])
-        pf.write(dataline + "\n")
+    # Write out fluxes.
+    if fluxes is not None:
+        fluxfile = f"{outfilename}-fluxes-00.dat"
+        with open(fluxfile, "a") as ff:
+            dataline += "  " + " ".join([f"{flux[0][0]:.6f}  "
+                                         f"{flux[0][1]:.6f} "
+                                         f"{flux[1]:.6f}"
+                                         for flux in fluxes])
+            ff.write(dataline + "\n")
 
 
-def sweeping_points(gprm):
+def sweeping_points(prm):
     """Define the points of measurement inside the Box.
 
     Args:
-        gprm (dict): general parameters of the simulation.
+        prm (dict): general parameters of the simulation.
 
     Returns:
         sweeppos (numpy array): the sites of the lattice to be swept.
     """
-    xa, xb = gprm["sweepinterval"]
-    dx = (xb - xa) / gprm["nsweeps"]
+    xa, xb = prm["sweepinterval"]
+    dx = (xb - xa) / prm["nsweeps"]
     #
-    ya, yb = gprm["sweepinterval"]
-    dy = (yb - ya) / gprm["nsweeps"]
+    ya, yb = prm["sweepinterval"]
+    dy = (yb - ya) / prm["nsweeps"]
 
     # Run through columns in a line, then move to next line.
     sweeppos = np.array(
@@ -578,18 +589,18 @@ def sweeping_points(gprm):
     return sweeppos
 
 
-def parameters_write(gprm, pfile):
+def parameters_write(prm, pfile):
     """Write simulation parameters to data file.
 
     Args:
-        gprm (dict): general parameters of the simulation;
+        prm (dict): general parameters of the simulation;
         pfile (file pointer): file to be written to.
     """
     head = ("# Set general parameters for XBPM simulation."
             " Measures in mm when suitable.\n"
             f"# {datetime.now()}\n")
     pfile.write(head)
-    for key, val in gprm.items():
+    for key, val in prm.items():
         # Skip if entry is a dictionary for gaussian distribution or
         # a copy of the beam distribution.
         if isinstance(key, int) or key == "origbeam":
@@ -601,52 +612,52 @@ def parameters_write(gprm, pfile):
     pfile.write("\n")
 
 
-def outfile_initialize(gprm):
+def outfile_initialize(prm):
     """Initialize output data files.
 
     Args:
-        gprm (dict): general parameters of the simulation.
+        prm (dict): general parameters of the simulation.
     """
-    cfile = f"{gprm['outfilename']}-cross-00.dat"
-    pfile = f"{gprm['outfilename']}-pair-00.dat"
-    for dfile in [cfile, pfile]:
+    pfile = f"{prm['outfilename']}-positions-00.dat"
+    ffile = f"{prm['outfilename']}-fluxes-00.dat"
+    for dfile in [pfile, ffile]:
         with open(dfile, "w") as df:
-            parameters_write(gprm, df)
+            parameters_write(prm, df)
 
 
-def sweep_make(fig, beamhist, imageshow, pindiodes, bmp, gprm):
+def sweep_make(fig, beamhist, imageshow, pindiodes, bmp, prm):
     """Loop for the sweeping process of the beam in a rectangle inside 'Box'.
 
     Args:
         fig (pyplot figure): the figure canvas to be updated
         beamhist (numpy array): 2d histogram with total beam distribution
         imageshow (tuple): pyplot axes and images;
-        blades (BladeMask object): mask array and its intervals;
+        pindiodes (PinMask object): mask array and its intervals;
         bmp (BeamPosition object): methods to calculate position;
-        gprm (dict): general parameters
+        prm (dict): general parameters
     """
     imshowbeam, imshowblades, axval = imageshow
 
     # Points where to center the distribution(s) for further sweeping.
-    means = sweeping_points(gprm)
+    means = sweeping_points(prm)
 
     # Set output files.
-    outfile_initialize(gprm)
+    outfile_initialize(prm)
 
     # Shift the mean of the distribution(s) to perform the sweeping.
     for mean in means:
         shiftedbeam = histogram_shift(beamhist[0], mean,
-                                      oldmean=gprm['mean'],
-                                      pixelsize=gprm["pixelsize"])
+                                      oldmean=prm['mean'],
+                                      pixelsize=prm["pixelsize"])
 
-        # Update the 'mean' entry in gprm.
-        # mean_update(gprm, mean, len(beamhist))
+        # Update the 'mean' entry in prm.
+        # mean_update(prm, mean, len(beamhist))
 
         # Update the histograms for the new mean.
-        if gprm['histupdate']:
-            histogram_update(beamhist, gprm)
+        if prm['histupdate']:
+            histogram_update(beamhist, prm)
 
-        imgbeam = shiftedbeam if gprm["ngauss"] == 1 else sum(beamhist)
+        imgbeam = shiftedbeam if prm["ngauss"] == 1 else sum(beamhist)
         imshowbeam.set_data(imgbeam)
         #
         # imgmasked = imgbeam * blades.mask
@@ -654,15 +665,12 @@ def sweep_make(fig, beamhist, imageshow, pindiodes, bmp, gprm):
         imshowblades.set_data(imgmasked)
 
         # Update measured data and show it.
-        (fluxes, pairpositions,
-         crosspositions, ineigh) = observables_calculate(imgmasked, bmp)
-        box_values_show(axval, fluxes, mean, pairpositions,
-                        crosspositions, ineigh)
+        (beam_pos, fluxes) = bmp.center_of_mass(imgmasked)
+        box_values_show(axval, fluxes, mean, beam_pos)
 
         # Record values.
-        registerflux = fluxes if gprm['registerflux'] else None
-        measurement_record(mean, crosspositions, pairpositions, gprm,
-                           fluxes=registerflux)
+        registerflux = fluxes if prm['registerflux'] else None
+        measurement_record(mean, beam_pos, prm, fluxes=registerflux)
 
         fig.canvas.draw_idle()
         plt.pause(0.1)
@@ -680,7 +688,9 @@ def parameters_read(parfilename, distributionfile):
         mean (numpy array): initial gaussian beam mean;
         cov (numpy array): initial gaussian beam covariance.
     """
-    prm = dict()
+    boollist = ['addring', 'histupdate', 'randomhist',
+                'registerflux', 'centerpins']
+    prm = {item : False for item in boollist}
     with open(parfilename, 'r') as pf:
         for line in pf:
             # Skip comments
@@ -694,9 +704,9 @@ def parameters_read(parfilename, distributionfile):
                 v1 = float(re.sub(r'[\[\,]', '', val[0]))
                 v2 = float(re.sub(r'[\]\,]', '', val[1]))
                 prm[key] = np.array([v1, v2])
-            elif key in ['addring', 'histupdate',
-                         'randomhist', 'registerflux']:
-                prm[key] = False if val[0] == 'False' else True
+            elif key in boollist:
+                if val[0] == "True":
+                    prm[key] = True
             elif key in ['ngauss', 'nsweeps', 'nsample', 'ndots']:
                 prm[key] = int(float(val[0]))
             elif key == 'thetadeg':
@@ -710,13 +720,12 @@ def parameters_read(parfilename, distributionfile):
 
     # Set standard mean, covariance matrix and number of samples per frame
     # for each histogram.
-    mean = deepcopy(prm['mean'])
     cx, cy = prm['fwhm_x'] * FWHM2SIGMA, prm['fwhm_y'] * FWHM2SIGMA
-    cov = np.array([[cx, prm['cxy']], [prm['cyx'], cy]])
-    prm['cov'] = cov
+    prm['cov'] = np.array([[cx, prm['cxy']], [prm['cyx'], cy]])
 
     # Define output file name base.
-    sdx = (prm['sweepinterval'][1] - prm['sweepinterval'][0]) / prm['nsweeps']
+    sdx = (prm['sweepinterval'][1] -
+           prm['sweepinterval'][0]) / prm['nsweeps']
     outfilename = (
         f"XBPM_mu_{0.0:04.1f}_FWHM_"
         f"x{prm['fwhm_x']:04.1f}_"
@@ -726,7 +735,7 @@ def parameters_read(parfilename, distributionfile):
     prm['distributionfile'] = distributionfile
     prm['sweepstep'] = sdx
 
-    return prm, mean, cov
+    return prm
 
 
 def cmd_options():
@@ -768,34 +777,6 @@ def cmd_options():
     return interactive, parameterfile, distributionfile
 
 
-def interactive_run(gprm, beamhist, mask, bmp, fig, axes, step=0.2):
-    """."""
-    listener = Listener(
-        on_press=lambda event: on_press(event, gprm=gprm, step=step),
-        on_release=on_release,
-    )
-    listener.start()
-
-    # Animation function caller
-    axbeam, axblades, axval = axes
-    imshow = partial(image_show, beamhist=beamhist,
-                        mask=mask, bmp=bmp, gprm=gprm,
-                        axes=(axbeam, axblades, axval))
-    try:
-        # Animate. Variable 'anim' prevents FuncAnimation
-        # from being deleted without rendering.
-        anim = mpanim.FuncAnimation(fig, imshow,         # noqa: F841
-                                    repeat=False,
-                                    repeat_delay=500)
-        # writer = mpanim.PillowWriter(fps=2)
-        # anim.save("xbpm_sweep.gif", writer=writer)
-
-    except Exception as err:
-        print("ERROR when calling FuncAnimation: ", err)
-
-    return anim, listener
-
-
 def main():
     """Simulate in real time the incidence of photons upon XBPM blades."""
     # Initialize random seed.
@@ -805,38 +786,33 @@ def main():
     interactive, parameterfile, distributionfile = cmd_options()
 
     # General parameters of the simulation.
-    prm, mean, cov = parameters_read(parameterfile, distributionfile)
+    prm = parameters_read(parameterfile, distributionfile)
 
     # Add a dictionary of each gaussian's parameters to the general
-    # parameters (gprm) dictionary.
-    histogram_parameters_set(prm, mean, cov)
+    # parameters (prm) dictionary.
+    histogram_parameters_set(prm)
 
     # Initialize histogram(s).
     beamhist = histogram_init(prm)
     prm['origbeam'] = deepcopy(beamhist[0])
     print("done.\n")
 
-    # DEBUG
-    print(f" (MAIN) windowsize = {prm['windowsize']}")
-    # DEBUG
-
     # Create blades array, a 'mask'.
     pindiodes = PinMask(prm)
 
-    # DEBUG
-    print(f" (MAIN) pin coordinates = {pindiodes.coordinates}")
-    # DEBUG
-
     # Initialize beam position calculation methods.
-    bmp = BmP(pindiodes.coordinates_array)  # , prm)
+    bmp = BmP(pindiodes, prm)
 
     # Initialize subplots.
     fig, (axbeam, axblades, axval) = plt.subplots(1, 3, figsize=(15, 6))
+    fig.tight_layout()
 
     # Listen to the keyboard arrows (interactive motion of the beam mean).
     if interactive:
         anim, listener = interactive_run(prm, beamhist, pindiodes.mask,
-                                   bmp, fig, axes=(axbeam, axblades, axval))
+                                         bmp, fig,
+                                         axes=(axbeam, axblades, axval),
+                                         step=0.1)
     else:
         # Show initial image.
         imbeam, imblades = image_show(None, beamhist, pindiodes.mask, bmp,
